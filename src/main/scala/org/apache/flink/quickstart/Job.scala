@@ -58,27 +58,71 @@ object Job {
 //
 //    counts.print()
 
-    val env = ExecutionEnvironment.getExecutionEnvironment
-
-    val mails = env.readCsvFile[(String, String, String)](
-      "flinkMails.gz",
-      lineDelimiter = "##//##",
-      fieldDelimiter = "#|#",
-      includedFields = Array(0, 2, 5))
-
-    val cleanmail = mails
-      .map(m => (m._1, m._2.substring(0,m._2.lastIndexOf("<")), m._3))
-
-    val replies = cleanmail
-      .join(cleanmail).where(0).equalTo(2) {(l,r) => (l._2,r._2,1) }
-      .groupBy(0,1)
-      .sum(2)
-      .print()
+//    val env = ExecutionEnvironment.getExecutionEnvironment
+//
+//    val mails = env.readCsvFile[(String, String, String)](
+//      "flinkMails.gz",
+//      lineDelimiter = "##//##",
+//      fieldDelimiter = "#|#",
+//      includedFields = Array(0, 2, 5))
+//
+//    val cleanmail = mails
+//      .map(m => (m._1, m._2.substring(0,m._2.lastIndexOf("<")), m._3))
+//
+//    val replies = cleanmail
+//      .join(cleanmail).where(0).equalTo(2) {(l,r) => (l._2,r._2,1) }
+//      .groupBy(0,1)
+//      .sum(2)
+//      .print()
 
 //seems to be working
 
+    val env = ExecutionEnvironment.getExecutionEnvironment
 
+//    val mails = env.readCsvFile[(String, String)](
+//      "flinkMails.gz",
+//      lineDelimiter = "##//##",
+//      fieldDelimiter = "#|#",
+//      includedFields = Array(0, 4))
 
+    val mails = env.fromElements(
+      ("1","this is a mail and this is incredible"),
+      ("2","this is an other mail and it is also incredible"),
+      ("3","this mail is one more mail to mail and eat bread"))
+
+    //computation of the mail number
+    val nb = mails.count()
+
+    val banlist = Set("is","a")
+
+    //definition of a function to tokenize a mail
+    def wordCount(m : (String, String)) : Traversable[(String, String, Int)] = {
+
+      val wordlist = m._2.toLowerCase.split("\\W+")
+        .map(w => (m._1, w, 1) )
+
+      return wordlist.toTraversable
+    }
+
+    //get the list of every word with its mail source
+    val words = mails.flatMap(m => wordCount(m) ).filter(w => !banlist.contains(w._2))
+
+    //count the words in a same mail to get tf
+    val tf =  words.groupBy(0,1)
+      .sum(2)
+
+    val idf = words.groupBy(0,1)
+        //keep only one sample of a word per mail
+        .reduce((l,r) => (l._1,l._2,1))
+        //group by word
+        .groupBy(1)
+        //count the number of word per group and keep(word,nb of docs containing this word)
+        .reduce((l,r) => ("any",l._2,l._3 + r._3))
+        .map(w => (w._2, w._3.toDouble / nb))
+
+    //join tf and idf on "word" and compute tf-idf
+    val tfidf = tf.join(idf).where(1).equalTo(0) {(l,r) => (l._1,l._2,l._3, r._2, l._3.toDouble * r._2)}
+      .print()
 
     /**
       * Here, you can start creating your execution plan for Flink.
