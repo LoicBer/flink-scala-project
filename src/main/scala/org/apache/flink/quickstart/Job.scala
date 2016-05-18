@@ -58,6 +58,25 @@ object Job {
 //
 //    counts.print()
 
+    val env = ExecutionEnvironment.getExecutionEnvironment
+
+    val mails = env.readCsvFile[(String, String, String)](
+      "flinkMails.gz",
+      lineDelimiter = "##//##",
+      fieldDelimiter = "#|#",
+      includedFields = Array(0, 2, 5))
+
+    val cleanmail = mails
+      .map(m => (m._1, m._2.substring(0,m._2.lastIndexOf("<")), m._3))
+
+    val replies = cleanmail
+      .join(cleanmail).where(0).equalTo(2) {(l,r) => (l._2,r._2,1) }
+      .groupBy(0,1)
+      .sum(2)
+      .print()
+
+//seems to be working
+
 
 
 
