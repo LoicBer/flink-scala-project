@@ -39,24 +39,24 @@ object Job {
 
   def main(args: Array[String]) {
 
-
+//ready to work on graphReply
 
     // set up the execution environment
-    val env = ExecutionEnvironment.getExecutionEnvironment
-
-    val mails = env.readCsvFile[(String, String)](
-      "flinkMails.gz",
-      lineDelimiter = "##//##",
-      fieldDelimiter = "#|#",
-      includedFields = Array(1, 2))
-
-
-
-    val counts = mails.map(m => (m._1.substring(0,7), m._2, 1))
-      .groupBy(0,1).reduce((l,r) => (l._1,r._2,l._3 + r._3))
-      //.sum(2)
-
-    counts.print()
+//    val env = ExecutionEnvironment.getExecutionEnvironment
+//
+//    val mails = env.readCsvFile[(String, String)](
+//      "flinkMails.gz",
+//      lineDelimiter = "##//##",
+//      fieldDelimiter = "#|#",
+//      includedFields = Array(1, 2))
+//
+//
+//
+//    val counts = mails.map(m => (m._1.substring(0,7), m._2, 1))
+//      .groupBy(0,1).reduce((l,r) => (l._1,r._2,l._3 + r._3))
+//      //.sum(2)
+//
+//    counts.print()
 
 
 
