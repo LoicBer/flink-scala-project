@@ -88,7 +88,8 @@ object Job {
     val mails = env.fromElements(
       ("1","this is a mail and this is incredible"),
       ("2","this is an other mail and it is also incredible"),
-      ("3","this mail is one more mail to mail and eat bread"))
+      ("3","this mail is one more mail"),
+      ("4","there are so many mails"))
 
     //computation of the mail number
     val nb = mails.count()
