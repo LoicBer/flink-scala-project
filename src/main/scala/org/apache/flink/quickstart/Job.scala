@@ -18,16 +18,16 @@ package org.apache.flink.quickstart
  * limitations under the License.
  */
 
-import com.dataartisans.flinktraining.exercises.datastream_java.datatypes.TaxiRide
-import com.dataartisans.flinktraining.exercises.datastream_java.sources.TaxiRideSource
-import com.dataartisans.flinktraining.exercises.datastream_java.utils.GeoUtils
-import org.apache.flink.api.common.functions.RichFlatMapFunction
-import org.apache.flink.api.common.state.{ValueStateDescriptor, ValueState}
+
+
+import org.apache.flink.api.common.functions._
+import org.apache.flink.api.java.functions.FunctionAnnotation.ForwardedFields
 import org.apache.flink.api.java.utils.ParameterTool
+import org.apache.flink.api.scala._
 import org.apache.flink.configuration.Configuration
-import org.apache.flink.streaming.api.TimeCharacteristic
-import org.apache.flink.streaming.api.scala._
-import org.apache.flink.util.Collector
+import org.apache.flink.examples.java.clustering.util.KMeansData
+
+import scala.collection.JavaConverters._
 
 /**
  * Skeleton for a Flink Job.
@@ -46,87 +46,110 @@ import org.apache.flink.util.Collector
  */
 object Job {
 
-  def main(args: Array[String]) {
+  trait Coordinates extends Serializable {
+    var x: Double
+    var y: Double
 
-    /**
-      * Here, you can start creating your execution plan for Flink.
-      *
-      * Start with getting some data from the environment, like
-      * env.readTextFile(textPath);
-      *
-      * then, transform the resulting DataSet[String] using operations
-      * like:
-      * .filter()
-      * .flatMap()
-      * .join()
-      * .group()
-      *
-      * and many more.
-      * Have a look at the programming guide:
-      *
-      * http://flink.apache.org/docs/latest/programming_guide.html
-      *
-      * and the examples
-      *
-      * http://flink.apache.org/docs/latest/examples.html
-      *
-      */
+    def add(other : Coordinates): this.type  = {
+      x += other.x
+      y += other.y
+      this
+    }
 
-    val env = StreamExecutionEnvironment.getExecutionEnvironment
+    def div(other : Long): this.type = {
+      x = x/other
+      y = y/other
+      this
+    }
 
-    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
+    def dist(other : Coordinates): Double = {
+      val d = Math.sqrt( (x - other.x)*(x - other.x) + (y - other.y)*(y - other.y))
+      d
+    }
 
-    val rides = env.addSource(
-      new TaxiRideSource("nycTaxiRides.gz",60,600)
+    def clear() : Unit = {
+      x = 0
+      y = 0
+    }
+
+    override def toString: String = {
+      s"$x $y"
+
+    }
+
+  }
+
+  case class Point(var x: Double = 0, var y: Double = 0) extends Coordinates
+
+  case class Centroid(var id : Int = 0, var x: Double = 0, var y: Double = 0) extends Coordinates {
+    def this(id: Int, p: Point) {
+      this(id, p.x, p.y)
+    }
+
+    override def toString : String = {
+      s"$id ${super.toString}"
+    }
+  }
+
+  def getCentroidDataSet(params: ParameterTool, env: ExecutionEnvironment) : DataSet[Centroid] = {
+    env.readCsvFile[Centroid](
+      params.get("centroids"),
+      fieldDelimiter = " ",
+      includedFields = Array(0,1,2))
+  }
+
+  def getPointDataSet(params: ParameterTool, env: ExecutionEnvironment) : DataSet[Point] = {
+    env.readCsvFile[Point](
+      params.get("points"),
+      fieldDelimiter = " ",
+      includedFields = Array(0,1)
     )
+  }
 
-    val avgSpeedRides = rides
-      .filter(
-        r => (GeoUtils.isInNYC(r.startLon,r.startLat)
-              && GeoUtils.isInNYC(r.endLon,r.endLat))
+
+  class nearestCentroids extends RichMapFunction[Point,(Int,Point,Long)] {
+
+    private var centroids: Traversable[Centroid] = null
+
+    override def open(config: Configuration) {
+      centroids = getRuntimeContext.getBroadcastVariable[Centroid]("centroids").asScala
+    }
+
+    def map(p : Point): (Int,Point,Long) = {
+      var nc = -1
+      var sd = Double.MaxValue
+      centroids.foreach(c =>
+        if (p.dist(c) < sd) {
+          sd = p.dist(c)
+          nc = c.id
+        }
       )
-        .keyBy(r => r.rideId)
-          .flatMap(new SpeedComputer)
-    avgSpeedRides.print()
-
-    env.execute("test")
+      (nc,p,1L)
+    }
   }
 
-    class SpeedComputer extends RichFlatMapFunction[TaxiRide, (Long, Float)] {
 
-      var state: ValueState[TaxiRide] = null
+  def main(args: Array[String]) {
+    val env = ExecutionEnvironment.getExecutionEnvironment
 
-      override def open(config: Configuration): Unit = {
-        state = getRuntimeContext.getState(new ValueStateDescriptor("ride", classOf[TaxiRide], null))
-      }
+    val params = ParameterTool.fromArgs(args)
 
-      override def flatMap(ride: TaxiRide, out: Collector[(Long, Float)]): Unit = {
+    val centroids = getCentroidDataSet(params, env)
+    val points = getPointDataSet(params, env)
 
-        if(state.value() == null) {
-          // first ride
-          state.update(ride)
-        }
-        else {
-          // second ride
-          val startEvent = if (ride.isStart) ride else state.value()
-          val endEvent = if (ride.isStart) state.value() else ride
+    val finalcentroids = centroids.iterate(100) {
+      currentcentroids => val newcentroids = points
+          .map(new nearestCentroids).withBroadcastSet(currentcentroids,"centroids")
+          .groupBy(0)
+          .reduce( (l,r) => (l._1, l._2.add(r._2), l._3 + r._3))
+          .map( p => new Centroid(p._1,p._2.div(p._3)))
+        newcentroids
+    }
 
-          val timeDiff = endEvent.time.getMillis - startEvent.time.getMillis
-          val speed = if (timeDiff != 0) {
-            (endEvent.travelDistance / timeDiff) * 60 * 60 * 1000
-          } else {
-            -1
-          }
-          // emit average speed
-          out.collect( (startEvent.rideId, speed) )
+    finalcentroids.print()
 
-          // clear state to free memory
-          state.update(null)
-        }
-      }
 
   }
-
 
 
     // execute program
