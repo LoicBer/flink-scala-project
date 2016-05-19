@@ -18,11 +18,16 @@ package org.apache.flink.quickstart
  * limitations under the License.
  */
 
+import com.dataartisans.flinktraining.exercises.datastream_java.datatypes.TaxiRide
 import com.dataartisans.flinktraining.exercises.datastream_java.sources.TaxiRideSource
 import com.dataartisans.flinktraining.exercises.datastream_java.utils.GeoUtils
-import org.apache.flink.api.scala._
+import org.apache.flink.api.common.functions.RichFlatMapFunction
+import org.apache.flink.api.common.state.{ValueStateDescriptor, ValueState}
+import org.apache.flink.api.java.utils.ParameterTool
+import org.apache.flink.configuration.Configuration
 import org.apache.flink.streaming.api.TimeCharacteristic
-import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
+import org.apache.flink.streaming.api.scala._
+import org.apache.flink.util.Collector
 
 /**
  * Skeleton for a Flink Job.
@@ -75,18 +80,55 @@ object Job {
       new TaxiRideSource("nycTaxiRides.gz",60,600)
     )
 
-    val cleanRides = rides
+    val avgSpeedRides = rides
       .filter(
-        r => GeoUtils.isInNYC(r.startLon,r.startLat) && GeoUtils.isInNYC(r.endLon,r.endLat)
+        r => (GeoUtils.isInNYC(r.startLon,r.startLat)
+              && GeoUtils.isInNYC(r.endLon,r.endLat))
       )
-      .map(r => (r.time))
+        .keyBy(r => r.rideId)
+          .flatMap(new SpeedComputer)
+    avgSpeedRides.print()
 
-    cleanRides.print()
+    env.execute("test")
+  }
 
+    class SpeedComputer extends RichFlatMapFunction[TaxiRide, (Long, Float)] {
 
-    env.execute("Taxi rides cleansing")
+      var state: ValueState[TaxiRide] = null
+
+      override def open(config: Configuration): Unit = {
+        state = getRuntimeContext.getState(new ValueStateDescriptor("ride", classOf[TaxiRide], null))
+      }
+
+      override def flatMap(ride: TaxiRide, out: Collector[(Long, Float)]): Unit = {
+
+        if(state.value() == null) {
+          // first ride
+          state.update(ride)
+        }
+        else {
+          // second ride
+          val startEvent = if (ride.isStart) ride else state.value()
+          val endEvent = if (ride.isStart) state.value() else ride
+
+          val timeDiff = endEvent.time.getMillis - startEvent.time.getMillis
+          val speed = if (timeDiff != 0) {
+            (endEvent.travelDistance / timeDiff) * 60 * 60 * 1000
+          } else {
+            -1
+          }
+          // emit average speed
+          out.collect( (startEvent.rideId, speed) )
+
+          // clear state to free memory
+          state.update(null)
+        }
+      }
 
   }
+
+
+
     // execute program
     //env.execute("Flink Scala API Skeleton")
 
