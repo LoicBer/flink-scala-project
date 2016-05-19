@@ -18,7 +18,11 @@ package org.apache.flink.quickstart
  * limitations under the License.
  */
 
+import com.dataartisans.flinktraining.exercises.datastream_java.sources.TaxiRideSource
+import com.dataartisans.flinktraining.exercises.datastream_java.utils.GeoUtils
 import org.apache.flink.api.scala._
+import org.apache.flink.streaming.api.TimeCharacteristic
+import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
 
 /**
  * Skeleton for a Flink Job.
@@ -38,28 +42,6 @@ import org.apache.flink.api.scala._
 object Job {
 
   def main(args: Array[String]) {
-
-
-
-    // set up the execution environment
-    val env = ExecutionEnvironment.getExecutionEnvironment
-
-    val mails = env.readCsvFile[(String, String)](
-      "flinkMails.gz",
-      lineDelimiter = "##//##",
-      fieldDelimiter = "#|#",
-      includedFields = Array(1, 2))
-
-
-
-    val counts = mails.map(m => (m._1.substring(0,7), m._2, 1))
-      .groupBy(0,1).reduce((l,r) => (l._1,r._2,l._3 + r._3))
-      //.sum(2)
-
-    counts.print()
-
-
-
 
     /**
       * Here, you can start creating your execution plan for Flink.
@@ -84,6 +66,25 @@ object Job {
       * http://flink.apache.org/docs/latest/examples.html
       *
       */
+
+    val env = StreamExecutionEnvironment.getExecutionEnvironment
+
+    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
+
+    val rides = env.addSource(
+      new TaxiRideSource("nycTaxiRides.gz",60,600)
+    )
+
+    val cleanRides = rides
+      .filter(
+        r => GeoUtils.isInNYC(r.startLon,r.startLat) && GeoUtils.isInNYC(r.endLon,r.endLat)
+      )
+      .map(r => (r.time))
+
+    cleanRides.print()
+
+
+    env.execute("Taxi rides cleansing")
 
   }
     // execute program
